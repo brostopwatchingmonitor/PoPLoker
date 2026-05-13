@@ -1,0 +1,207 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ConnectivityStatus {
+  Online
+  Offline
+  Maintenance
+}
+
+enum SizeType {
+  S
+  M
+  L
+  XL
+}
+
+enum DoorStatus {
+  Open
+  Closed
+  Locked
+  Error
+}
+
+enum TransactionType {
+  RENTAL
+  DELEGATION
+  EXTENSION
+}
+
+enum TransactionStatus {
+  Pending
+  Active
+  Completed
+  Canceled
+  Expired
+}
+
+enum PaymentMethod {
+  Wallet
+  BankTransfer
+  EWallet
+  CreditCard
+}
+
+enum PaymentStatus {
+  Pending
+  Paid
+  Failed
+  Refunded
+}
+
+enum AuthorizationStatus {
+  Pending
+  Active
+  Revoked
+  Expired
+}
+
+model LockerStation {
+  station_id          String             @id @db.Char(36)
+  location_name       String             @db.VarChar(150)
+  latitude            Decimal?           @db.Decimal(10, 7)
+  longitude           Decimal?           @db.Decimal(10, 7)
+  connectivity_status ConnectivityStatus @default(Offline)
+  last_heartbeat      DateTime?          @db.Timestamp()
+  created_at          DateTime?          @default(now()) @db.Timestamp()
+
+  boxes LockerBox[]
+
+  @@index([latitude, longitude], name: "idx_station_location")
+  @@map("locker_station")
+}
+
+model LockerBox {
+  box_id         String     @id @db.Char(36)
+  station_id     String     @db.Char(36)
+  box_number     String     @db.VarChar(10)
+  size_type      SizeType
+  is_available   Boolean?   @default(true)
+  door_status    DoorStatus @default(Closed)
+  price_per_hour Decimal    @db.Decimal(10, 2)
+  updated_at     DateTime?  @default(now()) @updatedAt @db.Timestamp()
+
+  station      LockerStation @relation(fields: [station_id], references: [station_id])
+  transactions Transaction[]
+
+  @@unique([station_id, box_number])
+  @@index([station_id], name: "idx_locker_box_station")
+  // Prisma doesn't support partial indexes like `WHERE is_available = true` out of the box in the schema definition,
+  // but it will be preserved if pushed via SQL.
+  @@index([is_available, size_type], name: "idx_locker_box_available") 
+  @@map("locker_box")
+}
+
+model User {
+  user_id         String    @id @db.Char(36)
+  account_code    String    @unique @db.VarChar(20)
+  full_name       String    @db.VarChar(100)
+  email           String    @unique @db.VarChar(150)
+  hashed_password String    @db.VarChar(255)
+  hashed_pin      String?   @db.VarChar(255)
+  wallet_balance  Decimal?  @default(0.00) @db.Decimal(15, 2)
+  fcm_token       String?   @db.VarChar(255)
+  created_at      DateTime? @default(now()) @db.Timestamp()
+  updated_at      DateTime? @default(now()) @updatedAt @db.Timestamp()
+
+  owned_transactions Transaction[]    @relation("OwnerTransactions")
+  sent_transactions  Transaction[]    @relation("SenderTransactions")
+  authorized_roles   AuthorizedUser[]
+  activity_logs      ActivityLog[]
+
+  @@index([email], name: "idx_user_email")
+  @@index([account_code], name: "idx_user_account")
+  @@map("user")
+}
+
+model Transaction {
+  transaction_id   String            @id @db.Char(36)
+  box_id           String            @db.Char(36)
+  owner_id         String            @db.Char(36)
+  sender_id        String?           @db.Char(36)
+  transaction_type TransactionType
+  status           TransactionStatus @default(Pending)
+  base_fee         Decimal?          @db.Decimal(15, 2)
+  penalty_fee      Decimal?          @default(0) @db.Decimal(15, 2)
+  total_fee        Decimal?          @db.Decimal(15, 2)
+  started_at       DateTime?         @db.Timestamp()
+  due_at           DateTime?         @db.Timestamp()
+  ended_at         DateTime?         @db.Timestamp()
+
+  box             LockerBox        @relation(fields: [box_id], references: [box_id])
+  owner           User             @relation("OwnerTransactions", fields: [owner_id], references: [user_id])
+  sender          User?            @relation("SenderTransactions", fields: [sender_id], references: [user_id])
+  payments        Payment[]
+  activity_logs   ActivityLog[]
+  authorized_users AuthorizedUser[]
+
+  @@index([owner_id, started_at(sort: Desc)], name: "idx_transaction_owner")
+  @@index([sender_id, started_at(sort: Desc)], name: "idx_transaction_sender")
+  @@index([box_id, due_at], name: "idx_transaction_box")
+  @@map("transaction")
+}
+
+model Payment {
+  payment_id     String        @id @db.Char(36)
+  transaction_id String        @db.Char(36)
+  payment_method PaymentMethod
+  payment_status PaymentStatus @default(Pending)
+  amount         Decimal       @db.Decimal(15, 2)
+  gateway_ref    String?       @db.VarChar(100)
+  paid_at        DateTime?     @db.Timestamp()
+
+  transaction Transaction @relation(fields: [transaction_id], references: [transaction_id])
+
+  @@index([transaction_id], name: "idx_payment_transaction")
+  @@index([payment_status, paid_at], name: "idx_payment_status")
+  @@map("payment")
+}
+
+model EventType {
+  event_type_id Int     @id @default(autoincrement())
+  event_name    String  @unique @db.VarChar(50)
+  description   String? @db.VarChar(200)
+
+  activity_logs ActivityLog[]
+
+  @@map("event_type")
+}
+
+model ActivityLog {
+  log_id         String    @id @db.Char(36)
+  transaction_id String?   @db.Char(36)
+  actor_id       String?   @db.Char(36)
+  event_type_id  Int?
+  metadata_iot   Json?
+  logged_at      DateTime? @default(now()) @db.Timestamp()
+
+  transaction Transaction? @relation(fields: [transaction_id], references: [transaction_id])
+  actor       User?        @relation(fields: [actor_id], references: [user_id])
+  event_type  EventType?   @relation(fields: [event_type_id], references: [event_type_id])
+
+  @@index([transaction_id, logged_at(sort: Desc)], name: "idx_activity_transaction")
+  @@index([actor_id, logged_at(sort: Desc)], name: "idx_activity_actor")
+  @@map("activity_log")
+}
+
+model AuthorizedUser {
+  auth_id        String              @id @db.Char(36)
+  transaction_id String              @db.Char(36)
+  user_id        String              @db.Char(36)
+  status         AuthorizationStatus @default(Pending)
+  granted_at     DateTime?           @default(now()) @db.Timestamp()
+  expires_at     DateTime?           @db.Timestamp()
+
+  transaction Transaction @relation(fields: [transaction_id], references: [transaction_id])
+  user        User        @relation(fields: [user_id], references: [user_id])
+
+  @@unique([transaction_id, user_id])
+  @@index([user_id, transaction_id], name: "idx_auth_user_transaction")
+  @@map("authorized_user")
+}
