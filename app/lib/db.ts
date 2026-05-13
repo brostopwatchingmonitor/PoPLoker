@@ -48,7 +48,7 @@ export async function querySingle<T>(text: string, params?: unknown[]): Promise<
 }
 
 // Transaction helper
-export async function transaction<T>(callback: (sql: typeof import('@neondatabase/serverless').default) => Promise<T>): Promise<T> {
+export async function transaction<T>(callback: (clientSql: typeof sql) => Promise<T>): Promise<T> {
   const pool = getPool();
   const client = await pool.connect();
   try {
