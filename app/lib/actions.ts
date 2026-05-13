@@ -164,7 +164,7 @@ export async function createTransaction(input: CreateTransactionInput): Promise<
   `;
 
   // Mark box as unavailable
-  await updateBoxAvailability(input.boxId, false);
+  await updateBoxAvailability(input.box_id, false);
 
   return transaction as Transaction;
 }
